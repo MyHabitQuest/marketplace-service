@@ -1,0 +1,9 @@
+spring:
+  rabbitmq:
+    host: notification-rabbitmq
+
+app:
+  rabbit:
+    queue: marketplace-queue
+    exchange: marketplace.exchange
+    exchange-type: fanout

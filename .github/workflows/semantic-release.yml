@@ -1,0 +1,80 @@
+name: Semantic Release
+
+on:
+  workflow_run:
+    workflows: ['Build and Package']
+    types: [completed]
+
+permissions:
+  contents: write
+  issues: write
+  packages: write
+  pull-requests: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: myhabitquest/marketplace-service
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.semantic.outputs.version }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: |
+          npm install --save-dev semantic-release \
+            @semantic-release/git \
+            @semantic-release/changelog \
+            @semantic-release/github \
+            @semantic-release/commit-analyzer \
+            @semantic-release/release-notes-generator
+
+      - name: Run Semantic Release
+        id: semantic
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Run semantic-release, capture output, don't fail if no release
+          OUTPUT=$(npx semantic-release 2>&1 || true)
+          echo "$OUTPUT"
+          
+          if echo "$OUTPUT" | grep -q "Created tag"; then
+            VERSION=$(echo "$OUTPUT" | grep -oP '(?<=Created tag ).*')
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "No release created"
+            echo "version=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Log into GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull latest Docker image
+        run: |
+          IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          echo "Pulling $IMAGE"
+          docker pull $IMAGE || echo "No latest image found"
+
+      - name: Tag Docker image with semantic version
+        if: steps.semantic.outputs.version != ''
+        run: |
+          VERSION=${{ steps.semantic.outputs.version }}
+          IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          docker tag $IMAGE:latest $IMAGE:$VERSION
+          docker push $IMAGE:$VERSION
